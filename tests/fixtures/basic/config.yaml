@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: shop
+data:
+  flags: "checkout_v2=true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-snippets
+  namespace: shop
+data:
+  gzip.conf: "gzip on;"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: report-templates
+  namespace: shop
+data:
+  nightly.html: "<html></html>"
+---
+# Nothing references this since the old-app Deployment was deleted in 2024.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: old-app-config
+  namespace: shop
+data:
+  listen: "0.0.0.0:8080"
+---
+# Created by the control plane in every namespace: never an orphan.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-root-ca.crt
+  namespace: shop
+data:
+  ca.crt: "-----BEGIN CERTIFICATE-----"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: shop
+type: Opaque
+stringData:
+  password: hunter2
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-tls
+  namespace: shop
+type: kubernetes.io/tls
+stringData:
+  tls.crt: "x"
+  tls.key: "y"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ghcr-pull
+  namespace: shop
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: "{}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: smtp-credentials
+  namespace: shop
+type: Opaque
+stringData:
+  password: smtp
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shop-example-com-tls
+  namespace: shop
+type: kubernetes.io/tls
+stringData:
+  tls.crt: "x"
+  tls.key: "y"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: basic-auth
+  namespace: shop
+type: Opaque
+stringData:
+  auth: "ops:$apr1$x"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-sa-token
+  namespace: shop
+  annotations:
+    kubernetes.io/service-account.name: api
+type: kubernetes.io/service-account-token
+---
+# Left over from a rotated integration, still a live credential.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: stale-api-key
+  namespace: shop
+type: Opaque
+stringData:
+  key: AKIAIOSFODNN7EXAMPLE
+---
+# The ServiceAccount it belonged to is gone.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orphan-sa-token
+  namespace: shop
+  annotations:
+    kubernetes.io/service-account.name: deleted-sa
+type: kubernetes.io/service-account-token
+---
+# Helm keeps release state in Secrets; deleting these loses release history.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sh.helm.release.v1.shop.v7
+  namespace: shop
+type: helm.sh/release.v1
+stringData:
+  release: "H4sIA"

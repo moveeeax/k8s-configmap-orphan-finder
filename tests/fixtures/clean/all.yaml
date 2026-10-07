@@ -1,0 +1,96 @@
+# Every object here is referenced, including the ones that are only reachable
+# through an Ingress TLS block, a ServiceAccount or a Reloader annotation.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: cache
+      namespace: platform
+    spec:
+      replicas: 3
+      serviceName: cache
+      template:
+        metadata:
+          annotations:
+            configmap.reloader.stakater.com/reload: cache-tuning,cache-acl
+        spec:
+          serviceAccountName: cache
+          containers:
+            - name: redis
+              image: redis:7.2
+              envFrom:
+                - configMapRef:
+                    name: cache-env
+          volumes:
+            - name: acl
+              configMap:
+                name: cache-acl
+            - name: data
+              csi:
+                driver: secrets-store.csi.k8s.io
+                nodePublishSecretRef:
+                  name: csi-store-creds
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: cache
+      namespace: platform
+    imagePullSecrets:
+      - name: registry-pull
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: cache-admin
+      namespace: platform
+    spec:
+      tls:
+        - hosts: ["cache.internal"]
+          secretName: cache-internal-tls
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cache-env
+      namespace: platform
+    data:
+      REDIS_MAXMEMORY: 2gb
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cache-acl
+      namespace: platform
+    data:
+      users.acl: "user default on"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cache-tuning
+      namespace: platform
+    data:
+      sysctl: "net.core.somaxconn=1024"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: registry-pull
+      namespace: platform
+    type: kubernetes.io/dockerconfigjson
+    stringData:
+      .dockerconfigjson: "{}"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: cache-internal-tls
+      namespace: platform
+    type: kubernetes.io/tls
+    stringData:
+      tls.crt: "x"
+      tls.key: "y"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: csi-store-creds
+      namespace: platform
+    type: Opaque
+    stringData:
+      clientid: "abc"

@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: shop
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      serviceAccountName: api
+      imagePullSecrets:
+        - name: ghcr-pull
+      initContainers:
+        - name: migrate
+          image: ghcr.io/shop/migrate:1.4.0
+          envFrom:
+            - configMapRef:
+                name: api-config
+      containers:
+        - name: api
+          image: ghcr.io/shop/api:1.4.0
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: FEATURE_FLAGS
+              valueFrom:
+                configMapKeyRef:
+                  name: api-config
+                  key: flags
+            - name: LEGACY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: legacy-token
+                  key: token
+                  optional: true
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: nginx-snippets
+        - name: tls
+          projected:
+            sources:
+              - secret:
+                  name: api-tls
+              - configMap:
+                  name: ca-bundle
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+  namespace: shop
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: ghcr.io/shop/report:1.0.0
+              envFrom:
+                - secretRef:
+                    name: smtp-credentials
+              volumeMounts:
+                - name: templates
+                  mountPath: /templates
+          volumes:
+            - name: templates
+              configMap:
+                name: report-templates
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: shop
+imagePullSecrets:
+  - name: ghcr-pull
+secrets:
+  - name: api-sa-token
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop
+  namespace: shop
+  annotations:
+    nginx.ingress.kubernetes.io/auth-secret: basic-auth
+spec:
+  tls:
+    - hosts: ["shop.example.com"]
+      secretName: shop-example-com-tls
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
