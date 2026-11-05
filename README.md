@@ -1,7 +1,7 @@
 # k8s-configmap-orphan-finder
 
 [![ci](https://github.com/moveeeax/k8s-configmap-orphan-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/moveeeax/k8s-configmap-orphan-finder/actions/workflows/ci.yml)
-[![python](https://img.shields.io/badge/python-3.9%2B-3776ab)](https://www.python.org/)
+[![python](https://img.shields.io/badge/python-3.11%2B-3776ab)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Deleting a workload rarely deletes its config. This walks every pod template in a namespace, builds the set of ConfigMaps and Secrets that are *actually* referenced, and tells you which objects are dead weight — plus the opposite failure, references that point at objects which no longer exist.

@@ -107,7 +107,8 @@ def load_cluster(namespace: Optional[str], all_namespaces: bool = False) -> Inve
         from kubernetes.client.rest import ApiException  # type: ignore
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise LoadError(
-            "live mode needs the kubernetes client: pip install 'k8s-configmap-orphan-finder[live]'"
+            "live mode needs the kubernetes client: pip install "
+            "'k8s-configmap-orphan-finder[live] @ git+https://github.com/moveeeax/k8s-configmap-orphan-finder'"
         ) from exc
 
     try:

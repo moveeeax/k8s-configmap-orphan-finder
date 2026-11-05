@@ -87,7 +87,7 @@ def test_version(capsys):
     with pytest.raises(SystemExit) as excinfo:
         main(["--version"])
     assert excinfo.value.code == 0
-    assert "0.1.0" in capsys.readouterr().out
+    assert "0.2.0" in capsys.readouterr().out
 
 
 def test_live_mode_without_client_is_a_load_error(monkeypatch, capsys):
@@ -102,7 +102,9 @@ def test_live_mode_without_client_is_a_load_error(monkeypatch, capsys):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     assert main(["--namespace", "prod"]) == 2
-    assert "kubernetes client" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "kubernetes client" in err
+    assert "git+https://github.com/moveeeax/k8s-configmap-orphan-finder" in err
 
 
 def test_examples_tree_is_auditable():
