@@ -218,3 +218,100 @@ def test_unknown_kind_yields_nothing():
 def test_malformed_spec_does_not_explode():
     resource = Resource(kind="Deployment", name="x", namespace="shop", body={"spec": None})
     assert references_of(resource) == []
+
+
+def test_keys_are_recorded_on_key_refs_and_volume_items():
+    resource = res(
+        """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: p
+spec:
+  containers:
+    - name: c
+      env:
+        - name: A
+          valueFrom:
+            configMapKeyRef:
+              name: app
+              key: DB_HOST
+        - name: B
+          valueFrom:
+            configMapKeyRef:
+              name: app
+              key: DB_PORT
+        - name: C
+          valueFrom:
+            secretKeyRef:
+              name: creds
+              key: password
+      envFrom:
+        - configMapRef:
+            name: bulk
+  volumes:
+    - name: v1
+      configMap:
+        name: files
+        items:
+          - key: nginx.conf
+            path: nginx.conf
+    - name: v2
+      secret:
+        secretName: tls
+        items:
+          - key: tls.crt
+            path: cert.pem
+          - key: tls.key
+            path: key.pem
+    - name: v3
+      projected:
+        sources:
+          - configMap:
+              name: proj
+              items:
+                - key: a
+                  path: a
+          - secret:
+              name: proj-secret
+    - name: v4
+      configMap:
+        name: whole
+"""
+    )
+    found = {(r.target.name, r.key) for r in references_of(resource)}
+    assert found == {
+        ("app", "DB_HOST"),
+        ("app", "DB_PORT"),
+        ("creds", "password"),
+        ("bulk", ""),
+        ("files", "nginx.conf"),
+        ("tls", "tls.crt"),
+        ("tls", "tls.key"),
+        ("proj", "a"),
+        ("proj-secret", ""),
+        ("whole", ""),
+    }
+
+
+def test_volume_items_keep_the_optional_flag():
+    resource = res(
+        """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: p
+spec:
+  containers:
+    - name: c
+  volumes:
+    - name: v
+      secret:
+        secretName: maybe
+        optional: true
+        items:
+          - key: k
+            path: k
+"""
+    )
+    assert [(r.key, r.optional) for r in references_of(resource)] == [("k", True)]

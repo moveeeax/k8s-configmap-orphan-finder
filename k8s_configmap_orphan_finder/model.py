@@ -41,6 +41,9 @@ class Reference:
     field: str
     #: ``optional: true`` references do not block a pod from starting.
     optional: bool = False
+    #: Key the reference needs inside the object (``configMapKeyRef.key``,
+    #: ``items[].key``). Empty when the whole object is consumed.
+    key: str = ""
 
     def describe(self) -> str:
         return f"{self.referrer} ({self.field})"

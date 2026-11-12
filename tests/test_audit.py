@@ -203,3 +203,153 @@ def test_directory_without_manifests_raises(tmp_path):
     (tmp_path / "notes.txt").write_text("hello")
     with pytest.raises(LoadError):
         load_manifests(str(tmp_path))
+
+
+KEYS_NS = """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app
+  namespace: keys
+data:
+  DB_PORT: "5432"
+binaryData:
+  logo.png: aGVsbG8=
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+  namespace: keys
+type: Opaque
+data:
+  username: YWRtaW4=
+stringData:
+  password: hunter2
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sa-token
+  namespace: keys
+  annotations:
+    kubernetes.io/service-account.name: default
+type: kubernetes.io/service-account-token
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+  namespace: keys
+spec:
+  containers:
+    - name: c
+      env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app
+              key: DB_PORT
+        - name: USER
+          valueFrom:
+            secretKeyRef:
+              name: creds
+              key: username
+        - name: PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: creds
+              key: password
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: creds
+              key: api_key
+              optional: true
+        - name: TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sa-token
+              key: token
+        - name: GONE
+          valueFrom:
+            configMapKeyRef:
+              name: deleted
+              key: anything
+  volumes:
+    - name: static
+      configMap:
+        name: app
+        items:
+          - key: logo.png
+            path: logo.png
+          - key: favicon.ico
+            path: favicon.ico
+"""
+
+
+def key_findings(tmp_path, **kwargs):
+    (tmp_path / "a.yaml").write_text(KEYS_NS)
+    result = audit(load_manifests(str(tmp_path)), Options(**kwargs))
+    return [f for f in result.findings if f.finding.endswith("-key")]
+
+
+def test_missing_configmap_key_is_high(tmp_path):
+    by_detail = {f.detail: f for f in key_findings(tmp_path) if f.kind == "ConfigMap"}
+    assert set(by_detail) == {"key 'DB_HOST' not found", "key 'favicon.ico' not found"}
+    for finding in by_detail.values():
+        assert finding.finding == "dangling-configmap-key"
+        assert finding.severity == "high"
+        assert finding.name == "app"
+    assert by_detail["key 'DB_HOST' not found"].referrers == [
+        "Pod/web (containers.env.configMapKeyRef)"
+    ]
+    assert by_detail["key 'favicon.ico' not found"].referrers == [
+        "Pod/web (volumes.configMap)"
+    ]
+
+
+def test_optional_missing_secret_key_is_low(tmp_path):
+    secrets = [f for f in key_findings(tmp_path) if f.kind == "Secret"]
+    assert len(secrets) == 1
+    finding = secrets[0]
+    assert finding.finding == "dangling-secret-key"
+    assert finding.name == "creds"
+    assert finding.severity == "low"
+    assert finding.detail == "key 'api_key' not found (optional: true)"
+
+
+def test_keys_from_every_data_field_count(tmp_path):
+    details = {f.detail for f in key_findings(tmp_path)}
+    # binaryData, data and stringData keys all satisfy a reference, and the
+    # token controller's keys satisfy a service-account token Secret.
+    for key in ("DB_PORT", "logo.png", "username", "password", "token"):
+        assert not any(repr(key) in d for d in details), key
+
+
+def test_missing_object_is_not_also_a_missing_key(tmp_path):
+    (tmp_path / "a.yaml").write_text(KEYS_NS)
+    result = audit(load_manifests(str(tmp_path)))
+    deleted = [f.finding for f in result.findings if f.name == "deleted"]
+    assert deleted == ["dangling-configmap-ref"]
+
+
+def test_key_findings_honour_ignore_and_skip_kinds(tmp_path):
+    assert key_findings(tmp_path, ignore=["app", "creds"]) == []
+    assert {f.kind for f in key_findings(tmp_path, skip_kinds=["ConfigMap"])} == {"Secret"}
+
+
+def test_secret_values_are_never_reported(tmp_path):
+    (tmp_path / "a.yaml").write_text(KEYS_NS)
+    from k8s_configmap_orphan_finder.report import render_json, render_table
+
+    result = audit(load_manifests(str(tmp_path)))
+    for rendered in (render_json(result), render_table(result)):
+        assert "hunter2" not in rendered
+        assert "YWRtaW4=" not in rendered
+        assert "api_key" in rendered
