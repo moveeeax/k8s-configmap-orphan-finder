@@ -11,6 +11,17 @@ from .refs import REF_KINDS, references_of, service_account_of
 
 SA_TOKEN_TYPE = "kubernetes.io/service-account-token"
 
+#: Keys the token controller writes into a service-account token Secret. A
+#: manifest declares the Secret empty and the cluster fills these in.
+SA_TOKEN_KEYS = frozenset(("ca.crt", "namespace", "token"))
+
+#: Fields that hold keys, per kind. ``stringData`` is write-only and merged into
+#: ``data`` by the API server, so it only shows up in manifests.
+KEY_FIELDS = {
+    "ConfigMap": ("data", "binaryData"),
+    "Secret": ("data", "stringData"),
+}
+
 #: Objects the control plane creates and owns. Reporting them is always wrong.
 CLUSTER_OWNED_NAMES = frozenset(
     (
@@ -54,6 +65,18 @@ def _secret_type(resource: Resource) -> str:
     return value if isinstance(value, str) else ""
 
 
+def keys_of(resource: Resource) -> Set[str]:
+    """Key names an object provides. Values are never read."""
+    keys: Set[str] = set()
+    for field_name in KEY_FIELDS.get(resource.kind, ()):
+        section = resource.body.get(field_name)
+        if isinstance(section, dict):
+            keys.update(k for k in section if isinstance(k, str))
+    if resource.kind == "Secret" and _secret_type(resource) == SA_TOKEN_TYPE:
+        keys |= SA_TOKEN_KEYS
+    return keys
+
+
 def _sa_owner(resource: Resource) -> str:
     annotations = (resource.body.get("metadata") or {}).get("annotations")
     if isinstance(annotations, dict):
@@ -61,6 +84,12 @@ def _sa_owner(resource: Resource) -> str:
         if isinstance(owner, str):
             return owner
     return ""
+
+
+def _describe(references: Iterable[Reference]) -> List[str]:
+    # One container can name several keys of the same object from the same
+    # field; list each place once.
+    return list(dict.fromkeys(r.describe() for r in references))
 
 
 def collect_references(inventory: Inventory, skip_kinds: Iterable[str] = ()) -> Dict[ObjectRef, List[Reference]]:
@@ -73,7 +102,7 @@ def collect_references(inventory: Inventory, skip_kinds: Iterable[str] = ()) -> 
     seen: Set[tuple] = set()
 
     def record(reference: Reference) -> None:
-        key = (reference.target, reference.referrer, reference.field)
+        key = (reference.target, reference.referrer, reference.field, reference.key)
         if key in seen:
             return
         seen.add(key)
@@ -97,6 +126,7 @@ def collect_references(inventory: Inventory, skip_kinds: Iterable[str] = ()) -> 
                             referrer=f"{resource.describe()} via ServiceAccount/{sa_name}",
                             field=reference.field,
                             optional=reference.optional,
+                            key=reference.key,
                         )
                     )
     return index
@@ -200,9 +230,41 @@ def audit(inventory: Inventory, options: Options = Options()) -> AuditResult:
                     if required
                     else "referenced but not found in scope (optional: true)"
                 ),
-                referrers=[r.describe() for r in referring],
+                referrers=_describe(referring),
             )
         )
+
+    # 3. References to a key the object does not have. The object exists, so
+    #    nothing above notices, but the pod still fails with
+    #    CreateContainerConfigError (env) or a volume mount error (items).
+    for ref, referring in sorted(references.items(), key=lambda kv: str(kv[0])):
+        resource = targets.get(ref)
+        if resource is None or ref.kind.lower() in skipped:
+            continue
+        if _ignored(ref.name, options.ignore) or ref.name in CLUSTER_OWNED_NAMES:
+            continue
+        present = keys_of(resource)
+        by_key: Dict[str, List[Reference]] = {}
+        for reference in referring:
+            if reference.key and reference.key not in present:
+                by_key.setdefault(reference.key, []).append(reference)
+        for missing in sorted(by_key):
+            required = [r for r in by_key[missing] if not r.optional]
+            findings.append(
+                Finding(
+                    severity="high" if required else "low",
+                    kind=ref.kind,
+                    namespace=ref.namespace,
+                    name=ref.name,
+                    finding="dangling-configmap-key" if ref.kind == "ConfigMap" else "dangling-secret-key",
+                    detail=(
+                        f"key {missing!r} not found"
+                        if required
+                        else f"key {missing!r} not found (optional: true)"
+                    ),
+                    referrers=_describe(by_key[missing]),
+                )
+            )
 
     floor = {"high": 0, "medium": 1, "low": 2}.get(options.min_severity, 2)
     findings = [f for f in findings if {"high": 0, "medium": 1, "low": 2}[f.severity] <= floor]

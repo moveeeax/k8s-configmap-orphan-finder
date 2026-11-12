@@ -65,7 +65,7 @@ class _Collector:
         self.referrer = referrer
         self.out: List[Reference] = []
 
-    def add(self, kind: str, name: Any, field: str, optional: Any = False) -> None:
+    def add(self, kind: str, name: Any, field: str, optional: Any = False, key: Any = "") -> None:
         if not isinstance(name, str) or not name:
             return
         namespace = self.namespace
@@ -80,8 +80,27 @@ class _Collector:
                 referrer=self.referrer,
                 field=field,
                 optional=bool(optional),
+                key=key if isinstance(key, str) else "",
             )
         )
+
+    def add_items(self, kind: str, source: Dict[str, Any], name_field: str, field: str) -> None:
+        """Record a configMap/secret volume source, one reference per ``items[].key``.
+
+        Without ``items`` the volume takes every key and needs none in particular.
+        """
+        name = source.get(name_field)
+        optional = source.get("optional")
+        keys = [
+            item.get("key")
+            for item in source.get("items") or []
+            if isinstance(item, dict) and isinstance(item.get("key"), str) and item.get("key")
+        ]
+        if not keys:
+            self.add(kind, name, field, optional)
+            return
+        for key in keys:
+            self.add(kind, name, field, optional, key)
 
 
 def _collect_container(container: Dict[str, Any], prefix: str, c: _Collector) -> None:
@@ -95,10 +114,22 @@ def _collect_container(container: Dict[str, Any], prefix: str, c: _Collector) ->
             continue
         cm = value_from.get("configMapKeyRef")
         if isinstance(cm, dict):
-            c.add("ConfigMap", cm.get("name"), f"{prefix}.env.configMapKeyRef", cm.get("optional"))
+            c.add(
+                "ConfigMap",
+                cm.get("name"),
+                f"{prefix}.env.configMapKeyRef",
+                cm.get("optional"),
+                cm.get("key"),
+            )
         secret = value_from.get("secretKeyRef")
         if isinstance(secret, dict):
-            c.add("Secret", secret.get("name"), f"{prefix}.env.secretKeyRef", secret.get("optional"))
+            c.add(
+                "Secret",
+                secret.get("name"),
+                f"{prefix}.env.secretKeyRef",
+                secret.get("optional"),
+                secret.get("key"),
+            )
     for entry in container.get("envFrom") or []:
         if not isinstance(entry, dict):
             continue
@@ -115,10 +146,10 @@ def _collect_volume(volume: Dict[str, Any], c: _Collector) -> None:
         return
     cm = volume.get("configMap")
     if isinstance(cm, dict):
-        c.add("ConfigMap", cm.get("name"), "volumes.configMap", cm.get("optional"))
+        c.add_items("ConfigMap", cm, "name", "volumes.configMap")
     secret = volume.get("secret")
     if isinstance(secret, dict):
-        c.add("Secret", secret.get("secretName"), "volumes.secret", secret.get("optional"))
+        c.add_items("Secret", secret, "secretName", "volumes.secret")
     projected = volume.get("projected")
     if isinstance(projected, dict):
         for source in projected.get("sources") or []:
@@ -126,20 +157,10 @@ def _collect_volume(volume: Dict[str, Any], c: _Collector) -> None:
                 continue
             pcm = source.get("configMap")
             if isinstance(pcm, dict):
-                c.add(
-                    "ConfigMap",
-                    pcm.get("name"),
-                    "volumes.projected.configMap",
-                    pcm.get("optional"),
-                )
+                c.add_items("ConfigMap", pcm, "name", "volumes.projected.configMap")
             psecret = source.get("secret")
             if isinstance(psecret, dict):
-                c.add(
-                    "Secret",
-                    psecret.get("name"),
-                    "volumes.projected.secret",
-                    psecret.get("optional"),
-                )
+                c.add_items("Secret", psecret, "name", "volumes.projected.secret")
     csi = volume.get("csi")
     if isinstance(csi, dict):
         node_publish = csi.get("nodePublishSecretRef")

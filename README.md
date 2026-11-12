@@ -50,6 +50,8 @@ Three more reference sources exist outside pod specs, and they are the ones that
 - **`Ingress`** — `spec.tls[].secretName`, plus the nginx annotations `auth-secret`, `auth-tls-secret` and `proxy-ssl-secret`. Those accept a `namespace/name` form and it is honoured.
 - **Reloader annotations** — `configmap.reloader.stakater.com/reload` and `secret.reloader.stakater.com/reload`, read from the workload *and* from its pod template.
 
+Keys are checked as well as names. `configMapKeyRef.key`, `secretKeyRef.key` and `items[].key` in `configMap`, `secret` and `projected` volumes are compared against the keys the object declares: `data` and `binaryData` for a ConfigMap, `data` and `stringData` for a Secret. A `kubernetes.io/service-account-token` Secret also counts as having `ca.crt`, `namespace` and `token`, since the token controller fills those in. Only key names are read and printed, never values.
+
 Objects the cluster or a controller owns are never reported: `kube-root-ca.crt`, `openshift-service-ca.crt`, `istio-ca-root-cert`, and Secrets typed `helm.sh/release.v1` or `bootstrap.kubernetes.io/token`.
 
 ### Findings
@@ -58,6 +60,7 @@ Objects the cluster or a controller owns are never reported: `kube-root-ca.crt`,
 | --- | --- | --- |
 | `orphan-secret` | high | A Secret nothing references. A live credential nobody remembers creating. |
 | `dangling-secret-ref` / `dangling-configmap-ref` | high | Something names an object that is not there. Pods will not start. `optional: true` drops it to low. |
+| `dangling-secret-key` / `dangling-configmap-key` | high | The object exists but lacks a key that `configMapKeyRef`/`secretKeyRef` or a volume's `items[].key` asks for. The pod fails with `CreateContainerConfigError` or a mount error. `optional: true` drops it to low. |
 | `orphan-configmap` | medium | A ConfigMap nothing references. Review noise. |
 | `orphan-serviceaccount-token` | medium / low | A legacy `kubernetes.io/service-account-token` Secret no pod mounts. Medium when its ServiceAccount is also gone. |
 
